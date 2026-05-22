@@ -18,7 +18,7 @@ class WordSegment(BaseModel):
 
 
 class ErrorType(BaseModel):
-    error_type: str = Field(..., pattern=r"^(substitution|omission|insertion|self_correction|unknown)$")
+    error_type: str = Field(..., pattern=r"^(substitution|omission|insertion|self_correction|unknown|word_order)$")
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = ""
     target_word: Optional[str] = None

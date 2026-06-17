@@ -1,11 +1,11 @@
 # Running Record — ASR Pipeline & Alignment Engine
 
-An automated **Running Record** assessment system that uses speech recognition to evaluate reading accuracy. Record a child reading aloud, and the system transcribes their speech, compares it against the target text, and identifies errors with detailed metrics.
+An automated **Running Record** assessment system that uses speech recognition to evaluate reading accuracy. A student reads a passage aloud; the system records the audio, transcribes it with Whisper, compares it against the target text, classifies miscues, and presents the results in a multi-page Streamlit dashboard.
 
 ## Features
 
-- 🎤 **Audio Recording** — Capture microphone input via `sounddevice`
-- 🗣️ **Whisper Transcription** — Word-level ASR using OpenAI's Whisper model (runs on Apple Silicon MPS or CPU)
+- 🎤 **In-App Recording** — Capture microphone input directly in the browser flow via `sounddevice` (recorded on the machine running Streamlit)
+- 🗣️ **Whisper Transcription** — Word-level ASR using the `openai/whisper-medium` model through 🤗 Transformers
 - 🔍 **Alignment Engine** — Fuzzy matching with error classification:
   - **Substitution** — Wrong word spoken
   - **Omission** — Word skipped
@@ -13,29 +13,59 @@ An automated **Running Record** assessment system that uses speech recognition t
   - **Self-Correction** — Word attempted then corrected
   - **Word Order** — Words present but in wrong sequence
 - 📊 **Metrics** — Accuracy %, WPM, total words, error counts
-- 🖥️ **Streamlit Dashboard** — Visual interface with highlighted errors and charts
+- 🖥️ **Multi-Page Streamlit App** — Student assessment flow, results visualization, and a teacher dashboard
+- 💾 **Record Persistence** — Each assessment is saved as JSON under `data/records/` for later review and CSV export
 
 ## Project Structure
 
 ```
 running_records/
+├── home.py                       # App entry point (Home / launcher page)
+├── pages/                        # Streamlit multi-page views
+│   ├── student_record.py         # Recording + transcription + analysis flow
+│   ├── student_results.py        # Per-student results (metrics, highlights, charts)
+│   └── teacher_admin.py          # Teacher dashboard: passages, records, analytics
 ├── src/                          # Core source code
 │   ├── alignment.py              # Alignment engine + error classification
 │   ├── audio_utils.py            # Secure temp file handling + audio chunking
+│   ├── dashboard.py              # Altair chart helpers
 │   ├── models.py                 # Pydantic data contracts (shared)
 │   ├── pipeline.py               # Whisper ASR service
-│   └── recording.py              # Microphone recording utilities
-├── tests/                        # Test suite (33 tests, all passing)
+│   └── recording.py              # Microphone recording utilities (CLI demo)
+├── utils.py                      # Error labels/colors, text highlighting, charts
+├── passages.json                 # Reading passages manifest
+├── data/records/                 # Saved assessment results (created at runtime)
+├── tests/                        # Test suite (38 tests, all passing)
 │   ├── test_alignment.py         # Alignment engine tests
+│   ├── test_integration_tracks.py# Pipeline → alignment integration tests
 │   ├── test_models.py            # Model validation tests
 │   ├── test_pipeline.py          # Pipeline tests
 │   └── test_recording.py         # Recording module tests
 ├── demo_pipeline.py              # CLI demo script
-├── streamlit_app.py              # Web dashboard
 ├── requirements.txt              # Python dependencies
 ├── pytest.ini                    # Test configuration
 └── .env.example                  # Environment variable template
 ```
+
+## How It Works
+
+```
+Home (home.py)
+  └─▶ "Start Student Assessment" ─▶ pick a passage ─▶ Confirm
+        └─▶ Student Record (pages/student_record.py)
+              ├─ Start / Stop microphone recording (sounddevice, background thread)
+              ├─ Transcribe WAV with Whisper (src/pipeline.py)
+              ├─ Align transcript vs. target text (src/alignment.py)
+              ├─ Save result JSON ─▶ data/records/
+              └─▶ Student Results (pages/student_results.py)
+
+Home ─▶ "Teacher Dashboard" ─▶ pages/teacher_admin.py
+        ├─ Passages   — add / edit / delete entries in passages.json
+        ├─ Records    — browse, filter, sort, and export saved assessments
+        └─ Analytics  — aggregate accuracy/miscue metrics + system status
+```
+
+Session-state guards enforce the flow: the **Student Record** page refuses to run until an assessment is started from Home, and the **Teacher Dashboard** blocks access while an assessment is active.
 
 ## Installation
 
@@ -44,8 +74,9 @@ running_records/
 - **Python 3.11+** (see `.python-version`)
 - **ffmpeg** — Required for Whisper to decode audio files
   - macOS: `brew install ffmpeg`
-  - Ubuntu/Debian: Install via your package manager (`apt-get install ffmpeg`)
+  - Ubuntu/Debian: `apt-get install ffmpeg`
   - Windows: Download from [ffmpeg.org](https://ffmpeg.org/download.html)
+- A working **microphone** on the machine that runs the app (recording happens server-side via `sounddevice`)
 
 ### Setup
 
@@ -59,27 +90,48 @@ source app_env/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+```
 
-# Set Hugging Face token (required for Whisper model access)
+### Hugging Face token (required)
+
+The ASR pipeline reads `HUGGING_FACE_HUB_TOKEN` from the environment and raises an error if it is missing. The app does **not** auto-load `.env`, so export the token in your shell before launching:
+
+```bash
 cp .env.example .env
-# Edit .env and add your token: HUGGING_FACE_HUB_TOKEN=hf_xxxxxx
+# Edit .env and set: HUGGING_FACE_HUB_TOKEN=hf_xxxxxx
+
+# Export it into the current shell (the app reads it from the environment)
+export $(grep -v '^#' .env | xargs)
 ```
 
 Get a free token at https://huggingface.co/settings/tokens (read permission is sufficient).
 
 ## Usage
 
+### Streamlit App
+
+Launch the multi-page web interface:
+
+```bash
+source app_env/bin/activate
+streamlit run home.py
+```
+
+Then, in the browser:
+
+1. **Home** → click **🎤 Start Student Assessment**, choose a passage, and confirm.
+2. **Student Record** → click **Start**, read the passage aloud, then **Stop**. The app transcribes, aligns, saves the result, and redirects to results.
+3. **Student Results** → review accuracy, WPM, total words, error count, highlighted text comparison, and an error breakdown chart.
+4. **Teacher Dashboard** → manage passages, browse/export saved records, and view aggregate analytics.
+
 ### Quick Demo (CLI)
 
-Record yourself reading, then get instant results:
+Record yourself reading from the command line, then get instant results:
 
 ```bash
 source app_env/bin/activate
 python demo_pipeline.py
-```
 
-Options:
-```bash
 # List available microphones
 python demo_pipeline.py --list-devices
 
@@ -87,20 +139,21 @@ python demo_pipeline.py --list-devices
 python demo_pipeline.py --duration 30 --target "The cat sat on the mat"
 ```
 
-### Streamlit Dashboard
+### Passages
 
-Launch the web interface:
+Passages are stored in `passages.json`. The default ships as a list of objects:
 
-```bash
-source app_env/bin/activate
-streamlit run streamlit_app.py
+```json
+[
+  { "id": 1, "title": "The Rain in Spain", "text": "The rain in Spain stays mainly in the plain." }
+]
 ```
 
-Features:
-- **Demo Mode** — Pre-loaded sample data to explore the interface
-- **Upload Audio** — Upload .wav files and enter target text for custom assessments
-- Visual error highlighting (color-coded by type)
-- Metrics cards, bar charts, and detailed error tables
+The app accepts both the list form above and a dict-keyed form. New passages added through the Teacher Dashboard are written back to this file.
+
+### Assessment Records
+
+Each completed assessment is written to `data/records/<student_id>_<timestamp>.json` with fields such as `student_id`, `passage_id`, `timestamp`, `accuracy_pct`, `miscue_count`, `word_error_rate`, and `transcript`. The Teacher Dashboard reads this directory to populate the Records and Analytics tabs.
 
 ### Programmatic Usage
 
@@ -145,6 +198,27 @@ pytest tests/test_alignment.py -v
 pytest tests/test_recording.py -v
 ```
 
+### Verifying the transcribe→align path
+
+The microphone step can't run in CI, but you can feed a sample `.wav` straight
+through `transcribe → align` two ways:
+
+```bash
+# Fast & deterministic — Whisper is mocked, no token or model download needed.
+# Runs as part of the normal suite.
+pytest tests/test_e2e_pipeline.py -v
+
+# Real model end-to-end — synthesizes speech with macOS `say` + ffmpeg, then runs
+# the actual whisper-medium model. Needs HUGGING_FACE_HUB_TOKEN exported.
+export $(grep -v '^#' .env | xargs)
+python scripts/verify_pipeline.py
+python scripts/verify_pipeline.py --text "The rain in Spain stays mostly in the plane."  # introduce miscues
+python scripts/verify_pipeline.py --wav my_reading.wav                                    # use your own audio
+
+# The same real-model check as an opt-in test (skipped by default):
+RUN_REAL_ASR=1 pytest -m integration -v
+```
+
 ### Test Coverage
 
 | Module | Tests | Description |
@@ -153,8 +227,9 @@ pytest tests/test_recording.py -v
 | `test_pipeline.py` | 3 | Secure temp files, Whisper output parsing, audio chunking |
 | `test_alignment.py` | 8 | Text alignment, error classification, metrics calculation |
 | `test_recording.py` | 19 | Audio buffer, file I/O, hardware mocking |
+| `test_integration_tracks.py` | 5 | Pipeline → alignment integration, metrics & serialization |
 
-**Total: 33 tests passing** ✅
+**Total: 38 tests passing** ✅
 
 ## Error Classification Details
 
@@ -171,17 +246,23 @@ The alignment engine uses fuzzy string matching (`rapidfuzz`) to compare transcr
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│ Microphone   │────▶│ Recording    │────▶│ WAV File    │
-│ (sounddevice)│     │ Module       │     │ (.wav)      │
-└─────────────┘     └──────────────┘     └──────┬──────┘
-                                                │
-                                                ▼
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│ Streamlit    │◀────│ Alignment    │◀────│ Whisper     │
-│ Dashboard    │     │ Engine       │     │ Pipeline    │
-│ (visualize)  │     │ (classify)   │     │ (ASR)       │
-└─────────────┘     └──────────────┘     └─────────────┘
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ Microphone   │────▶│ Recording    │────▶│ WAV File     │
+│ (sounddevice)│     │ (bg thread)  │     │ (temp .wav)  │
+└──────────────┘     └──────────────┘     └──────┬───────┘
+                                                 │
+                                                 ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ Whisper      │────▶│ Alignment    │────▶│ Result JSON  │
+│ Pipeline     │     │ Engine       │     │ data/records │
+│ (ASR)        │     │ (classify)   │     └──────┬───────┘
+└──────────────┘     └──────────────┘            │
+        ▲                                         ▼
+        │                              ┌──────────────────────┐
+        │                              │ Streamlit Multi-Page  │
+        └──────────────────────────────│ Home / Record /       │
+                                       │ Results / Teacher     │
+                                       └──────────────────────┘
 ```
 
 ## Dependencies
@@ -193,8 +274,9 @@ The alignment engine uses fuzzy string matching (`rapidfuzz`) to compare transcr
 | `rapidfuzz` | Fuzzy string matching for alignment |
 | `pydantic` | Data validation and serialization |
 | `numpy` | Audio array manipulation |
-| `python-dotenv` | Environment variable loading |
-| `streamlit` | Web dashboard (optional) |
+| `streamlit` | Multi-page web dashboard |
+| `pandas` + `altair` | Tables and charts in the dashboard |
+| `matplotlib` | Optional — accuracy-trend chart in the Analytics tab |
 
 ## License
 

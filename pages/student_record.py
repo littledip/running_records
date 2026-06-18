@@ -54,25 +54,30 @@ def main():
 
     st.divider()
 
-    # 2. Record via the browser microphone (no server-side threads needed)
+    # Gate the recording section until a student name is entered & confirmed,
+    # so the Analyze control is never disabled for a non-obvious reason.
+    if not student_name:
+        st.info("Enter the student's name above and press Enter to reveal recording.")
+        if st.button("🔄 Cancel Assessment"):
+            reset_assessment_state()
+            st.switch_page("home.py")
+        return
+
+    # 2. Record via the browser microphone (shown once a student is named)
     st.subheader("🎙️ Record the Reading")
-    st.caption("Use the microphone to record the student reading aloud, then click Analyze.")
+    st.caption(f"Record **{student_name}** reading the passage aloud, then click Analyze.")
     audio_value = st.audio_input("Record reading", label_visibility="collapsed")
 
     col1, col2 = st.columns([0.3, 0.7])
     with col1:
         analyze = st.button(
             "✅ Analyze Reading", type="primary",
-            disabled=audio_value is None or not student_name, use_container_width=True,
+            disabled=audio_value is None, use_container_width=True,
         )
     with col2:
         if st.button("🔄 Cancel Assessment", use_container_width=True):
             reset_assessment_state()
             st.switch_page("home.py")
-
-    if not student_name:
-        st.info("Enter the student's name above to begin.")
-        return
 
     if audio_value is None:
         st.info("Record the reading with the microphone above, then click **Analyze Reading**.")

@@ -43,10 +43,11 @@ def main():
     st.markdown(f"**Reading Passage:** {passage.get('title', 'Unknown')}")
     st.text_area("📖 Target Text", value=target_text, height=150, disabled=True)
 
-    # Student identity — so saved records aren't all "Unknown"
+    # Student identity — so saved records aren't all "Unknown". Keyed widget so a
+    # new assessment can clear it (home.py resets "student_name_input" on Confirm).
     student_name = st.text_input(
         "👤 Student name",
-        value=st.session_state.get("current_student_name", ""),
+        key="student_name_input",
         placeholder="e.g., Jane Doe",
     ).strip()
     st.session_state["current_student_name"] = student_name

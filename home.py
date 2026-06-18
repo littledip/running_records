@@ -63,6 +63,7 @@ if st.session_state["passage_selection_step"] == 1:
                     st.session_state["current_passage_id"] = passage_options[selected_passage_label]
                     st.session_state["assessment_active"] = True
                     st.session_state["passage_selection_step"] = 0
+                    st.session_state["student_name_input"] = ""  # fresh name for the new assessment
                     st.success(f"✅ Passage assigned: {selected_passage_label}")
                     st.switch_page("pages/student_record.py")
             with col_b:

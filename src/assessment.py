@@ -48,4 +48,7 @@ def result_to_record(
         "miscue_count": error_count,
         "word_error_rate": round(wer, 3),
         "transcript": result.transcript_text,
+        # Full alignment so a result can be re-displayed after a page refresh
+        # (see pages/student_results.py) without re-running the model.
+        "alignment": result.model_dump(mode="json"),
     }

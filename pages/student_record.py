@@ -5,18 +5,13 @@ import os
 from src.assessment import run_assessment, result_to_record
 from src.passages import get_passage
 from src.storage import save_record
+from ui import setup_page, reset_assessment_state
+
+setup_page("Student Record | Reading Assessment", icon="🎤")
 
 # ───────── Session State & Guards ─────────
 if "assessment_active" not in st.session_state:
     st.session_state["assessment_active"] = False
-
-
-def reset_assessment_state():
-    """Clear all assessment-related flags so no page gets wedged."""
-    for key in ("assessment_active", "recording_in_progress", "is_recording",
-                "recording_complete", "analysis_done"):
-        st.session_state[key] = False
-    st.session_state["current_passage_id"] = None
 
 
 def guard_assessment():
@@ -47,11 +42,31 @@ def main():
     target_text = passage.get("text", "")
     st.markdown(f"**Reading Passage:** {passage.get('title', 'Unknown')}")
     st.text_area("📖 Target Text", value=target_text, height=150, disabled=True)
+
+    # Student identity — so saved records aren't all "Unknown". Keyed widget so a
+    # new assessment can clear it (home.py resets "student_name_input" on Confirm).
+    student_name = st.text_input(
+        "👤 Student name",
+        key="student_name_input",
+        placeholder="e.g., Jane Doe",
+    ).strip()
+    st.session_state["current_student_name"] = student_name
+    st.session_state["current_student_id"] = student_name.replace(" ", "_") or "Unknown"
+
     st.divider()
 
-    # 2. Record via the browser microphone (no server-side threads needed)
+    # Gate the recording section until a student name is entered & confirmed,
+    # so the Analyze control is never disabled for a non-obvious reason.
+    if not student_name:
+        st.info("Enter the student's name above and press Enter to reveal recording.")
+        if st.button("🔄 Cancel Assessment"):
+            reset_assessment_state()
+            st.switch_page("home.py")
+        return
+
+    # 2. Record via the browser microphone (shown once a student is named)
     st.subheader("🎙️ Record the Reading")
-    st.caption("Use the microphone to record the student reading aloud, then click Analyze.")
+    st.caption(f"Record **{student_name}** reading the passage aloud, then click Analyze.")
     audio_value = st.audio_input("Record reading", label_visibility="collapsed")
 
     col1, col2 = st.columns([0.3, 0.7])

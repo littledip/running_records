@@ -2,8 +2,9 @@ import streamlit as st
 
 from src.config import PASSAGES_FILE
 from src.passages import load_passages
+from ui import setup_page, reset_assessment_state
 
-st.set_page_config(page_title="Reading Assessment | Home", page_icon="📖", layout="wide")
+setup_page("Reading Assessment | Home")
 
 # ───────── Session State Guards ─────────
 if "assessment_active" not in st.session_state:
@@ -21,13 +22,6 @@ def can_start_assessment():
         st.warning("⚠️ An assessment is already in progress. Complete or cancel it on the Student Record page first.")
         return False
     return True
-
-def reset_assessment_state():
-    """Clear all assessment-related session state."""
-    st.session_state["assessment_active"] = False
-    st.session_state["recording_in_progress"] = False
-    st.session_state["current_passage_id"] = None
-    st.session_state["passage_selection_step"] = 0
 
 # ───────── Dashboard UI ─────────
 st.title("📖 Automated Reading Assessment")
@@ -69,6 +63,7 @@ if st.session_state["passage_selection_step"] == 1:
                     st.session_state["current_passage_id"] = passage_options[selected_passage_label]
                     st.session_state["assessment_active"] = True
                     st.session_state["passage_selection_step"] = 0
+                    st.session_state["student_name_input"] = ""  # fresh name for the new assessment
                     st.success(f"✅ Passage assigned: {selected_passage_label}")
                     st.switch_page("pages/student_record.py")
             with col_b:

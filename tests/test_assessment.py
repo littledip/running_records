@@ -49,3 +49,16 @@ def test_result_to_record_defaults_name_to_id(patched_asr, wav_factory):
         result = run_assessment(wav, TARGET)
     record = result_to_record(result, passage_id=1, student_id="S2")
     assert record["student_name"] == "S2"
+
+
+def test_result_to_record_alignment_round_trips(patched_asr, wav_factory):
+    # The persisted 'alignment' must rebuild an AlignmentResult so the results
+    # page can re-display after a refresh without re-running the model.
+    wav = wav_factory()
+    with patched_asr("the dog sat the mat"):
+        result = run_assessment(wav, TARGET)
+    record = result_to_record(result, passage_id=1, student_id="S1")
+    restored = AlignmentResult.model_validate(record["alignment"])
+    assert restored.metrics.accuracy == result.metrics.accuracy
+    assert restored.transcript_text == result.transcript_text
+    assert len(restored.errors) == len(result.errors)

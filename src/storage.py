@@ -40,6 +40,13 @@ def list_records(records_dir: Path = RECORDS_DIR) -> list[dict]:
 
 
 def load_latest_record(records_dir: Path = RECORDS_DIR) -> dict | None:
-    """Return the most recently written record, or None."""
+    """Return the most recent record by its 'timestamp' field, or None.
+
+    Note: we sort by the timestamp field rather than filename, because filenames
+    are prefixed with student_id (so filename order is alphabetical by student,
+    not chronological).
+    """
     records = list_records(records_dir)
-    return records[-1] if records else None
+    if not records:
+        return None
+    return max(records, key=lambda r: r.get("timestamp", ""))

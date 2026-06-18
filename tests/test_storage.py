@@ -23,11 +23,14 @@ def test_list_records_skips_invalid(tmp_path):
     assert records[0]["student_id"] == "S"
 
 
-def test_load_latest_record(tmp_path):
-    # Filenames carry a timestamp prefix; list/latest order by that name.
-    (tmp_path / "A_20260101_100000.json").write_text('{"student_id": "A"}', encoding="utf-8")
-    (tmp_path / "B_20260101_100001.json").write_text('{"student_id": "B"}', encoding="utf-8")
-    assert storage.load_latest_record(tmp_path)["student_id"] == "B"
+def test_load_latest_record_uses_timestamp_not_filename(tmp_path):
+    # "Zed" sorts after "Amy" by filename, but Amy's assessment is more recent;
+    # latest must be chosen by the timestamp field, not the filename.
+    (tmp_path / "Zed_old.json").write_text(
+        '{"student_id": "Zed", "timestamp": "2026-01-01T10:00:00"}', encoding="utf-8")
+    (tmp_path / "Amy_new.json").write_text(
+        '{"student_id": "Amy", "timestamp": "2026-06-18T09:00:00"}', encoding="utf-8")
+    assert storage.load_latest_record(tmp_path)["student_id"] == "Amy"
 
 
 def test_load_latest_record_empty(tmp_path):

@@ -5,18 +5,13 @@ import os
 from src.assessment import run_assessment, result_to_record
 from src.passages import get_passage
 from src.storage import save_record
+from ui import setup_page, reset_assessment_state
+
+setup_page("Student Record | Reading Assessment", icon="🎤")
 
 # ───────── Session State & Guards ─────────
 if "assessment_active" not in st.session_state:
     st.session_state["assessment_active"] = False
-
-
-def reset_assessment_state():
-    """Clear all assessment-related flags so no page gets wedged."""
-    for key in ("assessment_active", "recording_in_progress", "is_recording",
-                "recording_complete", "analysis_done"):
-        st.session_state[key] = False
-    st.session_state["current_passage_id"] = None
 
 
 def guard_assessment():
@@ -47,6 +42,16 @@ def main():
     target_text = passage.get("text", "")
     st.markdown(f"**Reading Passage:** {passage.get('title', 'Unknown')}")
     st.text_area("📖 Target Text", value=target_text, height=150, disabled=True)
+
+    # Student identity — so saved records aren't all "Unknown"
+    student_name = st.text_input(
+        "👤 Student name",
+        value=st.session_state.get("current_student_name", ""),
+        placeholder="e.g., Jane Doe",
+    ).strip()
+    st.session_state["current_student_name"] = student_name
+    st.session_state["current_student_id"] = student_name.replace(" ", "_") or "Unknown"
+
     st.divider()
 
     # 2. Record via the browser microphone (no server-side threads needed)
@@ -58,12 +63,16 @@ def main():
     with col1:
         analyze = st.button(
             "✅ Analyze Reading", type="primary",
-            disabled=audio_value is None, use_container_width=True,
+            disabled=audio_value is None or not student_name, use_container_width=True,
         )
     with col2:
         if st.button("🔄 Cancel Assessment", use_container_width=True):
             reset_assessment_state()
             st.switch_page("home.py")
+
+    if not student_name:
+        st.info("Enter the student's name above to begin.")
+        return
 
     if audio_value is None:
         st.info("Record the reading with the microphone above, then click **Analyze Reading**.")

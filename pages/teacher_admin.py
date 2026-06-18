@@ -6,9 +6,10 @@ import pandas as pd
 from src.config import PASSAGES_FILE, RECORDS_DIR
 from src import passages as passages_lib
 from src.storage import list_records
+from ui import setup_page
 
 # ───────── Page Setup ─────────
-st.set_page_config(page_title="Teacher Dashboard", page_icon="👩‍🏫", layout="wide")
+setup_page("Teacher Dashboard | Reading Assessment", icon="👩‍🏫")
 st.title("👩‍🏫 Teacher Dashboard")
 
 
@@ -87,21 +88,26 @@ with tab_passages:
                 st.success(f"✅ Passage `{passage_id}` saved successfully.")
                 st.rerun()
 
-    # Display current passages as editable table
+    # Display current passages with row-selection delete
     if passages:
-        df = pd.DataFrame([{k: v.get("title", ""), "difficulty": v.get("difficulty", ""), 
-                           "grade": v.get("grade", ""), "file": v.get("file", "")} for k, v in passages.items()])
-        
-        st.dataframe(df, use_container_width=True)
-        
-        # Quick delete action
-        if st.button("🗑️ Delete Selected Passage(s)", type="secondary"):
-            selected = st.session_state.get("passage_selection", [])
-            if selected:
-                removed = passages_lib.delete_passages(selected)
-                load_passages.clear()  # invalidate cache so the change shows immediately
-                st.success(f"✅ Deleted {removed} passage(s).")
-                st.rerun()
+        rows = [
+            {"ID": pid, "Title": p.get("title", ""),
+             "Difficulty": p.get("difficulty", ""), "Grade": p.get("grade", "")}
+            for pid, p in passages.items()
+        ]
+        st.caption("Select one or more rows to delete.")
+        event = st.dataframe(
+            pd.DataFrame(rows), use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="multi-row",
+        )
+        selected_ids = [rows[i]["ID"] for i in event.selection.rows]
+
+        if st.button("🗑️ Delete Selected Passage(s)", type="secondary",
+                     disabled=not selected_ids):
+            removed = passages_lib.delete_passages(selected_ids)
+            load_passages.clear()  # invalidate cache so the change shows immediately
+            st.success(f"✅ Deleted {removed} passage(s).")
+            st.rerun()
 
 # ═══════════════════════════════════════════════════════════
 # TAB 2: Student Records Viewer

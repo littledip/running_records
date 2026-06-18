@@ -6,6 +6,7 @@ from transformers import pipeline
 from .models import RunningRecordResult, WordSegment
 from .audio_utils import write_secure_temp_wav, delete_secure_temp_file, split_audio_chunks
 
+
 class WhisperASRService:
     def __init__(self, model_name: str = "openai/whisper-medium", device: Optional[str] = None):
         self.model_name = model_name
@@ -51,7 +52,7 @@ class WhisperASRService:
                 out = pipe(tmp_path)
                 parsed = self._parse_whisper_output(out, offset=time_offset)
                 all_segments.extend(parsed.word_segments)
-                time_offset += parsed.metadata.get("duration_s", 0.0)
+                time_offset += parsed.metadata.get("total_duration_s", 0.0)
             finally:
                 delete_secure_temp_file(tmp_path)
 
@@ -68,17 +69,49 @@ class WhisperASRService:
             text = whisper_result["text"].strip()
             segments = []
             
-            for seg in whisper_result.get("segments", []):
-                if "words" in seg and isinstance(seg["words"], list):
-                    for w in seg["words"]:
+            # Handle both word-level timestamps (chunks) and segment-level timestamps
+            chunks = whisper_result.get("chunks", [])
+            
+            if chunks:
+                # Word-level timestamps: each chunk has {"text": "...", "timestamp": (start, end)}
+                for chunk in chunks:
+                    chunk_text = chunk["text"].strip()
+                    if not chunk_text:
+                        continue
+                    
+                    timestamp = chunk.get("timestamp")
+                    if isinstance(timestamp, (list, tuple)) and len(timestamp) == 2:
+                        start_time = timestamp[0] + offset
+                        end_time = timestamp[1] + offset
+                    else:
+                        start_time = offset
+                        end_time = offset
+                    
+                    # Split chunk text into individual words for finer alignment
+                    words_in_chunk = chunk_text.split()
+                    if len(words_in_chunk) == 1:
+                        # Single word in this chunk — use the full timestamp
                         segments.append(WordSegment(
-                            word=w["word"].strip(),
-                            start_time=w["start"] + offset,
-                            end_time=w["end"] + offset,
-                            confidence=w.get("probability", 0.9)
+                            word=words_in_chunk[0],
+                            start_time=start_time,
+                            end_time=end_time,
+                            confidence=chunk.get("probability", 0.9)
                         ))
-                else:
-                    # Fallback for non-word-level outputs or older versions
+                    else:
+                        # Multiple words in this chunk — distribute the timestamp evenly
+                        duration = end_time - start_time
+                        for i, word in enumerate(words_in_chunk):
+                            word_start = start_time + (i * duration / len(words_in_chunk))
+                            word_end = start_time + ((i + 1) * duration / len(words_in_chunk))
+                            segments.append(WordSegment(
+                                word=word,
+                                start_time=word_start,
+                                end_time=word_end,
+                                confidence=chunk.get("probability", 0.9)
+                            ))
+            else:
+                # Fallback for non-word-level outputs or older versions
+                for seg in whisper_result.get("segments", []):
                     segments.append(WordSegment(
                         word=seg["text"].strip(),
                         start_time=seg["start"] + offset,
@@ -86,16 +119,21 @@ class WhisperASRService:
                         confidence=0.95
                     ))
 
-            if whisper_result.get("segments"):
-                duration = whisper_result["segments"][-1]["end"] - whisper_result["segments"][0]["start"]
+            # Calculate total duration from all segments
+            if segments:
+                total_duration = segments[-1].end_time - segments[0].start_time
             else:
-                duration = 0.0
+                total_duration = 0.0
 
             return RunningRecordResult(
                 target_text="",
                 transcript_text=text,
                 word_segments=segments,
-                metadata={"duration_s": duration, "model": self.model_name}
+                metadata={
+                    "duration_s": total_duration,
+                    "model": self.model_name,
+                    "total_duration_s": total_duration
+                }
             )
         except Exception as e:
             raise RuntimeError(f"ASR parsing failed: {e}") from e

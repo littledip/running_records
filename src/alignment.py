@@ -137,16 +137,7 @@ class AlignmentEngine:
         segments = result.word_segments
         duration_s = result.metadata.get("duration_s", 0.0)
         
-        if not segments or duration_s <= 0:
-            return AlignmentMetrics(
-                accuracy=0.0,
-                wpm=0.0,
-                reading_rate_variance=0.0,
-                total_words=0,
-                error_count=0
-            )
-        
-        # Compare transcript words vs target words for true accuracy
+        # Always compute alignment — this is the source of truth for accuracy
         aligned_target, aligned_transcript = self.align_texts(
             result.target_text,
             result.transcript_text
@@ -169,13 +160,12 @@ class AlignmentEngine:
         )
         accuracy = correct_words / total_words
         
-        # WPM calculation (words per minute)
+        # WPM calculation — only if we have timing data
         wpm = (total_words * 60) / duration_s if duration_s > 0 else 0.0
         
-        # Reading rate variance — convert to numpy array first for arithmetic
-        timestamps = np.array([s.end_time for s in segments])
-        
-        if len(timestamps) > 1:
+        # Reading rate variance — needs word-level segments
+        if segments and len(segments) > 1:
+            timestamps = np.array([s.end_time for s in segments])
             reading_rate_variance = float(np.std(timestamps))
         else:
             reading_rate_variance = 0.0
@@ -198,12 +188,46 @@ class AlignmentEngine:
             result.transcript_text
         )
         
-        # Classify errors
+        # First pass: classify errors (substitution, omission, insertion)
         errors = []
         for i, (tgt_word, tr_word) in enumerate(zip(aligned_target, aligned_transcript)):
             error = self.classify_error(tgt_word, tr_word, result.metadata.get("duration_s", 0.0))
-            errors.append(error)
+            if error.error_type != "unknown":  # <-- FIX: filter out non-errors
+                errors.append(error)
+        
+        # Second pass: detect word_order errors
+        # Find words that appear in both target and transcript but at different positions
+        target_words = [w.strip().lower() for w in result.target_text.split()]
+        transcript_words = [w.strip().lower() for w in result.transcript_text.split()]
+        
+        # Build position maps (word -> list of positions)
+        target_positions = {}
+        for i, word in enumerate(target_words):
+            if word not in target_positions:
+                target_positions[word] = []
+            target_positions[word].append(i)
             
+        transcript_positions = {}
+        for i, word in enumerate(transcript_words):
+            if word not in transcript_positions:
+                transcript_positions[word] = []
+            transcript_positions[word].append(i)
+        
+        # Find words present in both but misaligned
+        for word in set(target_words) & set(transcript_words):
+            target_pos = target_positions[word]
+            transcript_pos = transcript_positions[word]
+            
+            # Check if any occurrence is at a different position
+            for tp, trp in zip(target_pos, transcript_pos):
+                if abs(tp - trp) > 0:  # Different positions -> word_order error
+                    errors.append(ErrorType(
+                        error_type="word_order",
+                        confidence=0.85,
+                        reason=f"Word '{word}' appears at position {tp} in target but {trp} in transcript",
+                        target_word=word
+                    ))
+        
         # Calculate metrics
         metrics = self.calculate_metrics(result)
         

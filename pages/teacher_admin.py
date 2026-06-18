@@ -1,58 +1,26 @@
 import streamlit as st
 import json
-from pathlib import Path
 from datetime import datetime
 import pandas as pd
-import uuid
+
+from src.config import PASSAGES_FILE, RECORDS_DIR
+from src import passages as passages_lib
+from src.storage import list_records
 
 # ───────── Page Setup ─────────
 st.set_page_config(page_title="Teacher Dashboard", page_icon="👩‍🏫", layout="wide")
 st.title("👩‍🏫 Teacher Dashboard")
 
-# ───────── Paths & Caching ─────────
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PASSAGES_FILE = PROJECT_ROOT / "passages.json"
-RECORDS_DIR = PROJECT_ROOT / "data" / "records"
 
+# ───────── Cached views over the core (cleared on writes) ─────────
 @st.cache_data(ttl=300)
 def load_passages():
-    """Load passages manifest. Handles both list and dict JSON formats."""
-    if not PASSAGES_FILE.exists():
-        return {}
-    try:
-        with open(PASSAGES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        # Convert LIST format to DICT format on-the-fly
-        if isinstance(data, list):
-            # Uses existing "id" field as key, or generates one if missing
-            return {item.get("id", f"passage_{i}"): item for i, item in enumerate(data)}
-        
-        # Already a dict → return as-is
-        if isinstance(data, dict):
-            return data
-            
-        st.warning("⚠️ Unexpected JSON structure in passages.json")
-        return {}
-    except json.JSONDecodeError as e:
-        st.error(f"❌ Invalid JSON in passages file: {e}")
-        return {}
+    return passages_lib.load_passages()
 
-@st.cache_data(ttl=60)  # Cache records for 1 minute
+
+@st.cache_data(ttl=60)
 def load_records():
-    """Load all student assessment records."""
-    if not RECORDS_DIR.exists():
-        return []
-    records = []
-    for f in sorted(RECORDS_DIR.glob("*.json")):
-        try:
-            with open(f, "r", encoding="utf-8") as file:
-                record = json.load(file)
-                record["_file"] = str(f)  # Keep track of source file
-                records.append(record)
-        except Exception as e:
-            st.warning(f"⚠️ Skipped invalid record file: {f.name}")
-    return records
+    return list_records()
 
 # ───────── Session State Guards ─────────
 if "assessment_active" not in st.session_state:
@@ -106,24 +74,16 @@ with tab_passages:
             if not passage_id or not title:
                 st.error("❌ ID and Title are required.")
             else:
-                try:
-                    with open(PASSAGES_FILE, "r", encoding="utf-8") as f:
-                        current_data = json.load(f)
-                except (FileNotFoundError, json.JSONDecodeError):
-                    current_data = {}
-
-                current_data[passage_id] = {
+                passages_lib.save_passage({
+                    "id": passage_id,
                     "title": title,
                     "difficulty": difficulty,
                     "grade": grade,
                     "file": f"passages/{passage_id}.txt",  # Auto-generate file ref
                     "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
-                }
-
-                with open(PASSAGES_FILE, "w", encoding="utf-8") as f:
-                    json.dump(current_data, f, indent=2, ensure_ascii=False)
-
+                    "updated_at": datetime.now().isoformat(),
+                })
+                load_passages.clear()  # invalidate cache so the edit shows immediately
                 st.success(f"✅ Passage `{passage_id}` saved successfully.")
                 st.rerun()
 
@@ -138,17 +98,10 @@ with tab_passages:
         if st.button("🗑️ Delete Selected Passage(s)", type="secondary"):
             selected = st.session_state.get("passage_selection", [])
             if selected:
-                try:
-                    with open(PASSAGES_FILE, "r", encoding="utf-8") as f:
-                        current_data = json.load(f)
-                    for sid in selected:
-                        current_data.pop(sid, None)
-                    with open(PASSAGES_FILE, "w", encoding="utf-8") as f:
-                        json.dump(current_data, f, indent=2, ensure_ascii=False)
-                    st.success(f"✅ Deleted {len(selected)} passage(s).")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Failed to delete: {e}")
+                removed = passages_lib.delete_passages(selected)
+                load_passages.clear()  # invalidate cache so the change shows immediately
+                st.success(f"✅ Deleted {removed} passage(s).")
+                st.rerun()
 
 # ═══════════════════════════════════════════════════════════
 # TAB 2: Student Records Viewer

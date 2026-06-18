@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 # Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.recording import record_audio_with_stop, list_audio_devices
 from src.pipeline import WhisperASRService

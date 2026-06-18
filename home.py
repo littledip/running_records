@@ -1,6 +1,7 @@
 import streamlit as st
-import json
-from pathlib import Path
+
+from src.config import PASSAGES_FILE
+from src.passages import load_passages
 
 st.set_page_config(page_title="Reading Assessment | Home", page_icon="📖", layout="wide")
 
@@ -27,29 +28,6 @@ def reset_assessment_state():
     st.session_state["recording_in_progress"] = False
     st.session_state["current_passage_id"] = None
     st.session_state["passage_selection_step"] = 0
-
-def load_passages():
-    """Load passages from JSON file."""
-    passages_path = Path(__file__).resolve().parent / "passages.json"
-    if not passages_path.exists():
-        return {}
-    try:
-        with open(passages_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        # Convert LIST format to DICT format for easy lookup
-        if isinstance(data, list):
-            return {item.get("id", f"passage_{i}"): item for i, item in enumerate(data)}
-        
-        # Already a dict → return as-is
-        if isinstance(data, dict):
-            return data
-            
-        st.warning("⚠️ Unexpected JSON structure in passages.json")
-        return {}
-    except json.JSONDecodeError as e:
-        st.error(f"❌ Invalid JSON in passages file: {e}")
-        return {}
 
 # ───────── Dashboard UI ─────────
 st.title("📖 Automated Reading Assessment")
@@ -104,8 +82,7 @@ with col2:
 
 # ───────── System Status ─────────
 st.subheader("🔧 System Status")
-passages_path = Path(__file__).resolve().parent / "passages.json"
-if passages_path.exists():
+if PASSAGES_FILE.exists():
     st.success("✅ Passages manifest loaded successfully")
 else:
     st.error("❌ Passages file missing. Ensure `passages.json` is in the project root.")

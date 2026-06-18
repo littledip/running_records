@@ -1,30 +1,30 @@
 import streamlit as st
 import tempfile
 import os
-import numpy as np
-import soundfile as sf
-import sounddevice as sd
 import time
-import threading
 import json
 from pathlib import Path
 
-# Import your pipeline helpers (adjust paths if needed)
 from src.pipeline import WhisperASRService
 from src.alignment import AlignmentEngine
-from src.models import RunningRecordResult, AlignmentResult
-from utils import ERROR_LABELS
+from src.models import AlignmentResult
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PASSAGES_FILE = PROJECT_ROOT / "passages.json"
+RECORDS_DIR = PROJECT_ROOT / "data" / "records"
 
 # ───────── Session State & Guards ─────────
 if "assessment_active" not in st.session_state:
     st.session_state["assessment_active"] = False
-if "recording_in_progress" not in st.session_state:
-    st.session_state["recording_in_progress"] = False
 
-# Auto-cleanup on page load
-if st.session_state.get("recording_in_progress") and not st.session_state.get("assessment_active"):
-    st.warning("⚠️ Previous recording session interrupted. State reset.")
-    st.session_state["recording_in_progress"] = False    
+
+def reset_assessment_state():
+    """Clear all assessment-related flags so no page gets wedged."""
+    for key in ("assessment_active", "recording_in_progress", "is_recording",
+                "recording_complete", "analysis_done"):
+        st.session_state[key] = False
+    st.session_state["current_passage_id"] = None
+
 
 def guard_assessment():
     if not st.session_state.get("assessment_active", False):
@@ -32,8 +32,10 @@ def guard_assessment():
         return False
     return True
 
+
 if not guard_assessment():
-    st.stop()  # Prevents execution of recording/Whisper logic if guard fails
+    st.stop()  # Prevents recording/analysis logic from running if guard fails
+
 
 def run_assessment_pipeline(audio_path: str, target_text: str) -> AlignmentResult:
     asr_service = WhisperASRService()
@@ -42,217 +44,112 @@ def run_assessment_pipeline(audio_path: str, target_text: str) -> AlignmentResul
     engine = AlignmentEngine()
     return engine.process_result(record_result)
 
+
+def load_assigned_passage():
+    """Return the passage dict assigned to this session, or None."""
+    if not PASSAGES_FILE.exists():
+        st.error("Passages file not found.")
+        return None
+    with open(PASSAGES_FILE, "r", encoding="utf-8") as f:
+        passages = json.load(f)
+    pid = st.session_state.get("current_passage_id")
+    # Handle both list and dict manifest formats
+    if isinstance(passages, list):
+        return next((p for p in passages if p.get("id") == pid), None)
+    return passages.get(pid)
+
+
+def save_record(result: AlignmentResult, passage_id) -> Path:
+    """Persist the assessment to data/records/ for the Teacher Dashboard."""
+    RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    total_words = result.metrics.total_words or 0
+    error_count = result.metrics.error_count or 0
+    wer = (error_count / total_words) if total_words else 0.0
+    student_id = st.session_state.get("current_student_id", "Unknown")
+
+    record = {
+        "student_id": student_id,
+        "student_name": st.session_state.get("current_student_name", student_id),
+        "passage_id": passage_id,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "accuracy_pct": round(result.metrics.accuracy * 100, 1),
+        "miscue_count": error_count,
+        "word_error_rate": round(wer, 3),
+        "transcript": result.transcript_text,
+    }
+    record_file = RECORDS_DIR / f"{student_id}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    with open(record_file, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    return record_file
+
+
 def main():
     st.title("🎤 Student Record")
 
-    # 1. Check for Assigned Passage
-    if "current_passage_id" not in st.session_state or st.session_state.current_passage_id is None:
-        st.warning("No passage assigned. Please go to Home Dashboard -> Teacher View to assign one.")
+    # 1. Resolve the assigned passage
+    if not st.session_state.get("current_passage_id"):
+        st.warning("No passage assigned. Please start an assessment from the Home page.")
         return
 
-    # Load passages
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent
-    PASSAGES_FILE = PROJECT_ROOT / "passages.json"
-
-    if not PASSAGES_FILE.exists():
-        st.error("Passages file not found.")
-        return
-        
-    with open(PASSAGES_FILE, "r", encoding="utf-8") as f:
-        passages = json.load(f)
-        
-    # Handle both list and dict formats gracefully
-    if isinstance(passages, list):
-        passage = next((p for p in passages if p.get("id") == st.session_state.current_passage_id), None)
-    else:
-        passage = passages.get(st.session_state.current_passage_id)
-        
+    passage = load_assigned_passage()
     if not passage:
-        st.error(f"Assigned passage '{st.session_state.current_passage_id}' not found.")
+        st.error(f"Assigned passage '{st.session_state.get('current_passage_id')}' not found.")
         return
 
     target_text = passage.get("text", "")
     st.markdown(f"**Reading Passage:** {passage.get('title', 'Unknown')}")
     st.text_area("📖 Target Text", value=target_text, height=150, disabled=True)
-    
     st.divider()
-    
-    # 2. Recording Controls & State
-    if "is_recording" not in st.session_state:
-        st.session_state.is_recording = False
-    if "recording_complete" not in st.session_state:
-        st.session_state.recording_complete = False
-    if "analysis_done" not in st.session_state:
-        st.session_state.analysis_done = False
-    if "temp_audio_file" not in st.session_state:
-        st.session_state.temp_audio_file = None
 
-    col1, col2, col3 = st.columns([0.15, 0.15, 0.7]) 
-    
+    # 2. Record via the browser microphone (no server-side threads needed)
+    st.subheader("🎙️ Record the Reading")
+    st.caption("Use the microphone to record the student reading aloud, then click Analyze.")
+    audio_value = st.audio_input("Record reading", label_visibility="collapsed")
+
+    col1, col2 = st.columns([0.3, 0.7])
     with col1:
-        if st.button("🎙️ Start", disabled=st.session_state.is_recording):
-            st.session_state.is_recording = True
-            st.session_state.recording_complete = False
-            st.session_state.analysis_done = False
-            st.session_state["assessment_active"] = True
-            st.session_state["recording_in_progress"] = True
-            # Initialize temp file for audio storage
-            temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-            temp_file.close()
-            st.session_state.temp_audio_file = temp_file.name
-            st.rerun()
-
+        analyze = st.button(
+            "✅ Analyze Reading", type="primary",
+            disabled=audio_value is None, use_container_width=True,
+        )
     with col2:
-        if st.button("⏹️ Stop", disabled=not st.session_state.is_recording):
-            st.session_state.is_recording = False
-            st.rerun()
+        if st.button("🔄 Cancel Assessment", use_container_width=True):
+            reset_assessment_state()
+            st.switch_page("home.py")
 
-    with col3:
-        if st.button("🔄 Reset", disabled=st.session_state.is_recording):
-            # Clean up temp file if it exists
-            if st.session_state.get("temp_audio_file") and os.path.exists(st.session_state.temp_audio_file):
-                os.unlink(st.session_state.temp_audio_file)
-            st.session_state.is_recording = False
-            st.session_state.recording_complete = False
-            st.session_state.analysis_done = False
-            st.session_state["assessment_active"] = False
-            st.session_state["recording_in_progress"] = False
-            st.session_state.temp_audio_file = None
-            st.rerun()
+    if audio_value is None:
+        st.info("Record the reading with the microphone above, then click **Analyze Reading**.")
+        return
 
-    # 3. Recording Logic (Background Thread)
-    if st.session_state.is_recording:
-        st.info("🔴 Recording... Click **Stop** when finished.")
-        
-        # Initialize recording state if needed
-        if "recording_thread" not in st.session_state:
-            st.session_state.recording_thread = None
-        if "stop_event" not in st.session_state:
-            st.session_state.stop_event = threading.Event()
-        if "audio_lock" not in st.session_state:
-            st.session_state.audio_lock = threading.Lock()
-            # Initialize audio chunks list
-            if "audio_chunks" not in st.session_state:
-                st.session_state.audio_chunks = []
+    if not analyze:
+        return
 
-        def record_callback(indata, frames, time_info, status):
-            """Callback for sounddevice stream."""
-            if status:
-                print(f"Audio callback status: {status}")
-            if st.session_state.stop_event.is_set():
-                sd.default.stop()
-                return
-            with st.session_state.audio_lock:
-                st.session_state.audio_chunks.append(indata.copy())
+    # 3. Analyze: write WAV → transcribe → align → save
+    result, error, tmp_path = None, None, None
+    with st.spinner("🔍 Transcribing and analyzing the reading..."):
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp.write(audio_value.getvalue())
+                tmp_path = tmp.name
+            result = run_assessment_pipeline(tmp_path, target_text)
+            record_file = save_record(result, st.session_state["current_passage_id"])
+            st.session_state["last_result"] = result
+            reset_assessment_state()
+        except Exception as e:  # noqa: BLE001 — surface any failure to the user
+            error = e
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
-        # Start recording thread if not already running
-        if st.session_state.recording_thread is None or not st.session_state.recording_thread.is_alive():
-            st.session_state.stop_event.clear()
-            st.session_state.audio_chunks = []
-            
-            def recording_worker():
-                """Worker function that runs the audio recording."""
-                try:
-                    with sd.InputStream(
-                        samplerate=16000,
-                        channels=1,
-                        callback=record_callback
-                    ):
-                        while not st.session_state.stop_event.is_set():
-                            time.sleep(0.1)
-                except Exception as e:
-                    print(f"Recording error: {e}")
-            
-            thread = threading.Thread(target=recording_worker, daemon=True)
-            thread.start()
-            st.session_state.recording_thread = thread
+    # 4. Navigate (kept outside try/except so st.switch_page isn't swallowed)
+    if error is not None:
+        st.error(f"Analysis failed: {error}")
+        st.exception(error)
+        return
 
-        # Check if recording should stop
-        if not st.session_state.is_recording:
-            st.session_state.stop_event.set()
-            # Wait for thread to finish
-            if st.session_state.recording_thread and st.session_state.recording_thread.is_alive():
-                st.session_state.recording_thread.join(timeout=2.0)
-            
-            # Save audio to temp file
-            with st.session_state.audio_lock:
-                audio_chunks = list(st.session_state.audio_chunks)
-            
-            if audio_chunks:
-                audio_data = np.concatenate(audio_chunks, axis=0)
-                sf.write(st.session_state.temp_audio_file, audio_data, 16000)
-                st.session_state.recording_complete = True
-                st.session_state["recording_in_progress"] = False
-            
-            # Clean up thread state for next recording
-            st.session_state.recording_thread = None
-            st.session_state.stop_event = threading.Event()
-            st.session_state.audio_lock = threading.Lock()
-            st.session_state.audio_chunks = []
-            st.rerun()
+    st.success(f"✅ Analysis complete! Saved to `{record_file.name}`.")
+    st.switch_page("pages/student_results.py")
 
-    # 4. Analysis Phase (Triggered when recording stops and audio exists)
-    if (not st.session_state.is_recording and 
-        st.session_state.get("recording_complete", False) and 
-        st.session_state.get("temp_audio_file") and 
-        os.path.exists(st.session_state.temp_audio_file) and
-        not st.session_state.analysis_done):
-        
-        with st.spinner("🔍 Analyzing reading accuracy..."):
-            try:
-                wav_path = st.session_state.temp_audio_file
-                
-                # Run the pipeline
-                result = run_assessment_pipeline(wav_path, target_text)
-                
-                # 💡 CRITICAL: Convert AlignmentResult to JSON-serializable dict
-                result_dict = {
-                    "student_id": st.session_state.get("current_student_id", "Unknown"),
-                    "passage_id": st.session_state.current_passage_id,
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "accuracy_pct": float(getattr(result, 'accuracy', 0)),
-                    "miscue_count": int(getattr(result, 'miscues', 0)),
-                    "word_error_rate": float(getattr(result, 'wer', 1.0)),
-                    "transcript": getattr(result, 'transcript', ""),
-                    "alignment_data": str(result)
-                }
-
-                # 💾 SAVE TO JSON FOR TEACHER DASHBOARD
-                RECORDS_DIR = PROJECT_ROOT / "data" / "records"
-                RECORDS_DIR.mkdir(parents=True, exist_ok=True)
-                record_file = RECORDS_DIR / f"{result_dict['student_id']}_{time.strftime('%Y%m%d_%H%M%S')}.json"
-                
-                with open(record_file, "w", encoding="utf-8") as f:
-                    json.dump(result_dict, f, indent=2)
-
-                st.session_state.last_result = result
-                st.session_state.analysis_done = True
-                
-                st.success(f"✅ Analysis complete! Saved to `{record_file.name}`")
-                time.sleep(1.5)
-
-                # Reset state for next assessment
-                # Clean up temp file
-                if st.session_state.get("temp_audio_file") and os.path.exists(st.session_state.temp_audio_file):
-                    os.unlink(st.session_state.temp_audio_file)
-                
-                st.session_state["recording_complete"] = False
-                st.session_state["assessment_active"] = False
-                st.session_state.temp_audio_file = None
-                st.session_state.analysis_done = False
-                
-                # Redirect to results page
-                try:
-                    st.switch_page("pages/student_results.py")
-                except Exception:
-                    st.info("ℹ️ Results saved. Navigate to Teacher Dashboard to view.")
-
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
-                st.exception(e)
-
-    elif not st.session_state.is_recording and not st.session_state.get("recording_complete", False):
-        st.info("Click **Start** to begin recording.")
 
 if __name__ == "__main__":
     main()

@@ -25,23 +25,34 @@ running_records/
 │   ├── student_record.py         # Recording + transcription + analysis flow
 │   ├── student_results.py        # Per-student results (metrics, highlights, charts)
 │   └── teacher_admin.py          # Teacher dashboard: passages, records, analytics
-├── src/                          # Core source code
+├── src/                          # UI-agnostic core (no Streamlit imports)
 │   ├── alignment.py              # Alignment engine + error classification
+│   ├── assessment.py             # Orchestration: transcribe→align + record building
 │   ├── audio_utils.py            # Secure temp file handling + audio chunking
-│   ├── dashboard.py              # Altair chart helpers
+│   ├── config.py                 # Central paths, model name, token lookup
 │   ├── models.py                 # Pydantic data contracts (shared)
+│   ├── passages.py               # Passage manifest load/lookup/save/delete
 │   ├── pipeline.py               # Whisper ASR service
-│   └── recording.py              # Microphone recording utilities (CLI demo)
+│   ├── recording.py              # Microphone recording utilities (CLI demo)
+│   └── storage.py                # Assessment-record repository (data/records)
 ├── utils.py                      # Error labels/colors, text highlighting, charts
 ├── passages.json                 # Reading passages manifest
 ├── data/records/                 # Saved assessment results (created at runtime)
-├── tests/                        # Test suite (38 tests, all passing)
+├── tests/                        # Test suite
 │   ├── test_alignment.py         # Alignment engine tests
+│   ├── test_assessment.py        # Orchestration + record-building tests
+│   ├── test_e2e_pipeline.py      # transcribe→align with Whisper mocked
 │   ├── test_integration_tracks.py# Pipeline → alignment integration tests
 │   ├── test_models.py            # Model validation tests
+│   ├── test_passages.py          # Passage manifest tests
 │   ├── test_pipeline.py          # Pipeline tests
-│   └── test_recording.py         # Recording module tests
-├── demo_pipeline.py              # CLI demo script
+│   ├── test_real_asr.py          # Opt-in real-model test (skipped by default)
+│   ├── test_recording.py         # Recording module tests
+│   └── test_storage.py           # Record repository tests
+├── scripts/                      # CLI utilities
+│   ├── demo_pipeline.py          # Record + transcribe + analyze demo
+│   ├── debug_recording.py        # Recording debug helper
+│   └── verify_pipeline.py        # Opt-in real-model verification harness
 ├── requirements.txt              # Python dependencies
 ├── pytest.ini                    # Test configuration
 └── .env.example                  # Environment variable template
@@ -130,13 +141,13 @@ Record yourself reading from the command line, then get instant results:
 
 ```bash
 source app_env/bin/activate
-python demo_pipeline.py
+python scripts/demo_pipeline.py
 
 # List available microphones
-python demo_pipeline.py --list-devices
+python scripts/demo_pipeline.py --list-devices
 
 # Record for 30 seconds with a specific target text
-python demo_pipeline.py --duration 30 --target "The cat sat on the mat"
+python scripts/demo_pipeline.py --duration 30 --target "The cat sat on the mat"
 ```
 
 ### Passages

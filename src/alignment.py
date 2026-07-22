@@ -1,7 +1,7 @@
 import os
 from typing import Optional, Tuple, List
 import numpy as np
-from rapidfuzz import fuzz, process
+from rapidfuzz import fuzz
 from .models import RunningRecordResult, AlignmentResult, ErrorType, AlignmentMetrics
 
 
@@ -10,68 +10,67 @@ class AlignmentEngine:
         self.phonetic_threshold = phonetic_threshold
         self.homophone_tolerance = homophone_tolerance
 
+    # Needleman-Wunsch scoring. A match must beat splitting a substitution into
+    # a separate omission + insertion (MISMATCH > 2 * GAP), so real substitutions
+    # stay paired while genuine gaps are recovered globally.
+    _MATCH = 2
+    _MISMATCH = -1
+    _GAP = -1
+
     def align_texts(self, target_text: str, transcript_text: str) -> Tuple[List[str], List[str]]:
-        """Align target vs transcript words using fuzzy matching.
-        
-        Handles length mismatches (insertions/omissions) by extending the shorter list with empty markers.
+        """Align target vs transcript words with global (Needleman-Wunsch) alignment.
+
+        Produces two equal-length lists where each position is a matched/substituted
+        pair, an omission (target word / ""), or an insertion ("" / transcript word).
+        Global cost minimisation avoids the greedy failure where a single omission
+        whose neighbours recur later desyncs the two sequences.
         """
         target_words = [w.strip().lower() for w in target_text.split()]
         transcript_words = [w.strip().lower() for w in transcript_text.split()]
+        n, m = len(target_words), len(transcript_words)
 
-        aligned_target = []
-        aligned_transcript = []
+        def sub_score(t_word: str, tr_word: str) -> int:
+            same = t_word == tr_word or self._is_homophone(t_word, tr_word)
+            return self._MATCH if same else self._MISMATCH
 
-        i, j = 0, 0
-        while i < len(target_words) or j < len(transcript_words):
-            if i >= len(target_words):
-                # Transcript has extra words (insertions)
-                aligned_target.append("")
-                aligned_transcript.append(transcript_words[j])
-                j += 1
-            elif j >= len(transcript_words):
-                # Target has words not in transcript (omissions)
-                aligned_target.append(target_words[i])
+        # Score matrix; first row/column are pure gaps.
+        score = [[0] * (m + 1) for _ in range(n + 1)]
+        for i in range(1, n + 1):
+            score[i][0] = i * self._GAP
+        for j in range(1, m + 1):
+            score[0][j] = j * self._GAP
+
+        for i in range(1, n + 1):
+            for j in range(1, m + 1):
+                diag = score[i - 1][j - 1] + sub_score(target_words[i - 1], transcript_words[j - 1])
+                up = score[i - 1][j] + self._GAP       # target word consumed → omission
+                left = score[i][j - 1] + self._GAP     # transcript word consumed → insertion
+                score[i][j] = max(diag, up, left)
+
+        # Backtrace from (n, m). Prefer diagonal (match/substitution) on ties.
+        aligned_target: List[str] = []
+        aligned_transcript: List[str] = []
+        i, j = n, m
+        while i > 0 or j > 0:
+            if (
+                i > 0 and j > 0
+                and score[i][j] == score[i - 1][j - 1] + sub_score(target_words[i - 1], transcript_words[j - 1])
+            ):
+                aligned_target.append(target_words[i - 1])
+                aligned_transcript.append(transcript_words[j - 1])
+                i -= 1
+                j -= 1
+            elif i > 0 and score[i][j] == score[i - 1][j] + self._GAP:
+                aligned_target.append(target_words[i - 1])
                 aligned_transcript.append("")
-                i += 1
+                i -= 1
             else:
-                t_word = target_words[i]
-                tr_word = transcript_words[j]
+                aligned_target.append("")
+                aligned_transcript.append(transcript_words[j - 1])
+                j -= 1
 
-                if self._is_homophone(tr_word, t_word):
-                    aligned_target.append(t_word)
-                    aligned_transcript.append(tr_word)
-                    i += 1
-                    j += 1
-                else:
-                    # Check if transcript word matches any nearby target word (insertion case)
-                    best_match = process.extractOne(
-                        tr_word, 
-                        target_words[i:i+3],  # Look ahead up to 3 words
-                        scorer=fuzz.ratio
-                    )
-                    
-                    if best_match and fuzz.ratio(best_match[0], tr_word) >= self.phonetic_threshold * 100:
-                        # Transcript word is an insertion (extra word not in target)
-                        aligned_target.append("")
-                        aligned_transcript.append(tr_word)
-                        j += 1
-                    else:
-                        # Normal comparison
-                        if t_word == tr_word:
-                            aligned_target.append(t_word)
-                            aligned_transcript.append(tr_word)
-                        else:
-                            # Substitution or mismatch
-                            matched = process.extractOne(tr_word, target_words, scorer=fuzz.ratio)
-                            if matched and fuzz.ratio(matched[0], tr_word) >= self.phonetic_threshold * 100:
-                                aligned_target.append(matched[0])
-                                aligned_transcript.append(tr_word)
-                            else:
-                                aligned_target.append(t_word)
-                                aligned_transcript.append(tr_word)
-                        i += 1
-                        j += 1
-
+        aligned_target.reverse()
+        aligned_transcript.reverse()
         return aligned_target, aligned_transcript
 
     def _is_homophone(self, word1: str, word2: str) -> bool:
@@ -99,7 +98,7 @@ class AlignmentEngine:
             return ErrorType(
                 error_type="omission",
                 confidence=0.90,
-                reason=f"Target word '{target_word}' missing from transcription at offset {offset_seconds:.2f}s",
+                reason=f"Target word '{target_word}' missing from transcription",
                 target_word=target_word
             )
             
@@ -112,10 +111,21 @@ class AlignmentEngine:
                 target_word=None
             )
             
+        # Both present. Homophones are identical in speech and indistinguishable
+        # to ASR, so they are not counted as errors. Defer to the same
+        # _is_homophone check the aligner uses so the two stages agree.
+        if self._is_homophone(target_word, transcript_word):
+            return ErrorType(
+                error_type="unknown",
+                confidence=0.50,
+                reason="Homophone — not counted as a reading error",
+                target_word=target_word
+            )
+
         # Both present → substitution check
         ratio = fuzz.ratio(target_word.lower(), transcript_word.lower())
         phonetic_ratio = fuzz.token_sort_ratio(target_word.lower(), transcript_word.lower())
-        
+
         if ratio < 85 or phonetic_ratio < 70:
             return ErrorType(
                 error_type="substitution",
@@ -143,8 +153,10 @@ class AlignmentEngine:
             result.transcript_text
         )
         
-        total_words = len(aligned_target)
-        if total_words == 0:
+        # Running words = number of words in the target passage (Running Record
+        # convention), independent of what was read.
+        running_words = len(result.target_text.split())
+        if running_words == 0:
             return AlignmentMetrics(
                 accuracy=0.0,
                 wpm=0.0,
@@ -152,33 +164,71 @@ class AlignmentEngine:
                 total_words=0,
                 error_count=0
             )
-        
-        # Count words where transcript matches target exactly
-        correct_words = sum(
-            1 for t, tr in zip(aligned_target, aligned_transcript)
-            if t.lower() == tr.lower()
-        )
-        accuracy = correct_words / total_words
-        
+
+        # error_count and accuracy share one source of truth: the assembled
+        # errors list. Accuracy = (running words - errors) / running words,
+        # clamped at 0 (insertions can push errors above the passage length).
+        error_count = len(self._detect_errors(aligned_target, aligned_transcript))
+        accuracy = max(0.0, (running_words - error_count) / running_words)
+
         # WPM calculation — only if we have timing data
-        wpm = (total_words * 60) / duration_s if duration_s > 0 else 0.0
-        
+        wpm = (running_words * 60) / duration_s if duration_s > 0 else 0.0
+
         # Reading rate variance — needs word-level segments
         if segments and len(segments) > 1:
             timestamps = np.array([s.end_time for s in segments])
             reading_rate_variance = float(np.std(timestamps))
         else:
             reading_rate_variance = 0.0
-        
-        error_count = total_words - correct_words
-        
+
         return AlignmentMetrics(
             accuracy=accuracy,
             wpm=wpm,
             reading_rate_variance=reading_rate_variance,
-            total_words=total_words,
+            total_words=running_words,
             error_count=error_count
         )
+
+    def _detect_errors(self, aligned_target: List[str], aligned_transcript: List[str]) -> List[ErrorType]:
+        """Turn an alignment into a list of errors, derived entirely from the alignment.
+
+        Substitutions come straight from ``classify_error``. Omissions and insertions
+        are held back: when the same word is both omitted (at one position) and
+        inserted (at another), that is a genuine reordering — reported once as a
+        ``word_order`` error rather than as a separate omission + insertion.
+        """
+        errors: List[ErrorType] = []
+        omissions: List[Tuple[str, ErrorType]] = []    # (omitted word, error), in order
+        insertions: List[Tuple[str, ErrorType]] = []   # (inserted word, error), in order
+
+        for tgt_word, tr_word in zip(aligned_target, aligned_transcript):
+            error = self.classify_error(tgt_word, tr_word)
+            if error.error_type == "unknown":
+                continue
+            if error.error_type == "omission":
+                omissions.append((tgt_word, error))
+            elif error.error_type == "insertion":
+                insertions.append((tr_word, error))
+            else:
+                errors.append(error)
+
+        # Pair each omission with an insertion of the same word → reordering.
+        remaining_insertions = list(insertions)
+        for word, om in omissions:
+            paired = next((pair for pair in remaining_insertions if pair[0] == word), None)
+            if paired is not None:
+                remaining_insertions.remove(paired)
+                errors.append(ErrorType(
+                    error_type="word_order",
+                    confidence=0.85,
+                    reason=f"Word '{word}' read out of order (transposed with a neighbouring word)",
+                    target_word=word,
+                ))
+            else:
+                errors.append(om)
+
+        errors.extend(err for _, err in remaining_insertions)
+        return errors
 
     def process_result(self, result: RunningRecordResult) -> AlignmentResult:
         """Process a complete transcription result and return structured alignment output."""
@@ -188,46 +238,8 @@ class AlignmentEngine:
             result.transcript_text
         )
         
-        # First pass: classify errors (substitution, omission, insertion)
-        errors = []
-        for i, (tgt_word, tr_word) in enumerate(zip(aligned_target, aligned_transcript)):
-            error = self.classify_error(tgt_word, tr_word, result.metadata.get("duration_s", 0.0))
-            if error.error_type != "unknown":  # <-- FIX: filter out non-errors
-                errors.append(error)
-        
-        # Second pass: detect word_order errors
-        # Find words that appear in both target and transcript but at different positions
-        target_words = [w.strip().lower() for w in result.target_text.split()]
-        transcript_words = [w.strip().lower() for w in result.transcript_text.split()]
-        
-        # Build position maps (word -> list of positions)
-        target_positions = {}
-        for i, word in enumerate(target_words):
-            if word not in target_positions:
-                target_positions[word] = []
-            target_positions[word].append(i)
-            
-        transcript_positions = {}
-        for i, word in enumerate(transcript_words):
-            if word not in transcript_positions:
-                transcript_positions[word] = []
-            transcript_positions[word].append(i)
-        
-        # Find words present in both but misaligned
-        for word in set(target_words) & set(transcript_words):
-            target_pos = target_positions[word]
-            transcript_pos = transcript_positions[word]
-            
-            # Check if any occurrence is at a different position
-            for tp, trp in zip(target_pos, transcript_pos):
-                if abs(tp - trp) > 0:  # Different positions -> word_order error
-                    errors.append(ErrorType(
-                        error_type="word_order",
-                        confidence=0.85,
-                        reason=f"Word '{word}' appears at position {tp} in target but {trp} in transcript",
-                        target_word=word
-                    ))
-        
+        errors = self._detect_errors(aligned_target, aligned_transcript)
+
         # Calculate metrics
         metrics = self.calculate_metrics(result)
         

@@ -1,7 +1,7 @@
 """Assessment-record repository — persistence for completed assessments.
 
-Replaces the inline JSON read/write that lived in student_record.py (write) and
-teacher_admin.py (read). Records are one JSON file per assessment under
+Replaces the inline JSON read/write that lived in Student_Record.py (write) and
+Teacher_Dashboard.py (read). Records are one JSON file per assessment under
 config.RECORDS_DIR. No Streamlit imports.
 """
 import json

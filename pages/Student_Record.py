@@ -44,7 +44,7 @@ def main():
     st.text_area("📖 Target Text", value=target_text, height=150, disabled=True)
 
     # Student identity — so saved records aren't all "Unknown". Keyed widget so a
-    # new assessment can clear it (home.py resets "student_name_input" on Confirm).
+    # new assessment can clear it (Running_Record.py resets "student_name_input" on Confirm).
     student_name = st.text_input(
         "👤 Student name",
         key="student_name_input",
@@ -61,7 +61,7 @@ def main():
         st.info("Enter the student's name above and press Enter to reveal recording.")
         if st.button("🔄 Cancel Assessment"):
             reset_assessment_state()
-            st.switch_page("home.py")
+            st.switch_page("Running_Record.py")
         return
 
     # 2. Record via the browser microphone (shown once a student is named)
@@ -78,7 +78,7 @@ def main():
     with col2:
         if st.button("🔄 Cancel Assessment", use_container_width=True):
             reset_assessment_state()
-            st.switch_page("home.py")
+            st.switch_page("Running_Record.py")
 
     if audio_value is None:
         st.info("Record the reading with the microphone above, then click **Analyze Reading**.")
@@ -116,7 +116,7 @@ def main():
         return
 
     st.success(f"✅ Analysis complete! Saved to `{record_file.name}`.")
-    st.switch_page("pages/student_results.py")
+    st.switch_page("pages/Student_Results.py")
 
 
 if __name__ == "__main__":

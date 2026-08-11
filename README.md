@@ -20,11 +20,11 @@ An automated **Running Record** assessment system that uses speech recognition t
 
 ```
 running_records/
-├── home.py                       # App entry point (Home / launcher page)
+├── Running_Record.py             # App entry point ("Running Record" launcher page)
 ├── pages/                        # Streamlit multi-page views
-│   ├── student_record.py         # Recording + transcription + analysis flow
-│   ├── student_results.py        # Per-student results (metrics, highlights, charts)
-│   └── teacher_admin.py          # Teacher dashboard: passages, records, analytics
+│   ├── Student_Record.py         # Recording + transcription + analysis flow
+│   ├── Student_Results.py        # Per-student results (metrics, highlights, charts)
+│   └── Teacher_Dashboard.py      # Teacher dashboard: passages, records, analytics
 ├── src/                          # UI-agnostic core (no Streamlit imports)
 │   ├── alignment.py              # Alignment engine + error classification
 │   ├── assessment.py             # Orchestration: transcribe→align + record building
@@ -61,16 +61,16 @@ running_records/
 ## How It Works
 
 ```
-Home (home.py)
+Running Record (Running_Record.py)
   └─▶ "Start Student Assessment" ─▶ pick a passage ─▶ Confirm
-        └─▶ Student Record (pages/student_record.py)
+        └─▶ Student Record (pages/Student_Record.py)
               ├─ Start / Stop microphone recording (sounddevice, background thread)
               ├─ Transcribe WAV with Whisper (src/pipeline.py)
               ├─ Align transcript vs. target text (src/alignment.py)
               ├─ Save result JSON ─▶ data/records/
-              └─▶ Student Results (pages/student_results.py)
+              └─▶ Student Results (pages/Student_Results.py)
 
-Home ─▶ "Teacher Dashboard" ─▶ pages/teacher_admin.py
+Teacher Dashboard (sidebar nav) ─▶ pages/Teacher_Dashboard.py
         ├─ Passages   — add / edit / delete entries in passages.json
         ├─ Records    — browse, filter, sort, and export saved assessments
         └─ Analytics  — aggregate accuracy/miscue metrics + system status
@@ -125,12 +125,12 @@ Launch the multi-page web interface:
 
 ```bash
 source app_env/bin/activate
-streamlit run home.py
+streamlit run Running_Record.py
 ```
 
 Then, in the browser:
 
-1. **Home** → click **🎤 Start Student Assessment**, choose a passage, and confirm.
+1. **Running Record** → click **🎤 Start Student Assessment**, choose a passage, and confirm.
 2. **Student Record** → click **Start**, read the passage aloud, then **Stop**. The app transcribes, aligns, saves the result, and redirects to results.
 3. **Student Results** → review accuracy, WPM, total words, error count, highlighted text comparison, and an error breakdown chart.
 4. **Teacher Dashboard** → manage passages, browse/export saved records, and view aggregate analytics.

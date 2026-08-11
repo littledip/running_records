@@ -30,13 +30,10 @@ Welcome to the **Running Records** system. This tool uses Whisper speech recogni
 """)
 
 # ───────── Step 1: Start Assessment Flow ─────────
-col1, col2 = st.columns(2)
-
-with col1:
-    if st.button("🎤 Start Student Assessment", type="primary", use_container_width=True):
-        if can_start_assessment():
-            st.session_state["passage_selection_step"] = 1
-            st.rerun()
+if st.button("🎤 Start Student Assessment", type="primary", use_container_width=True):
+    if can_start_assessment():
+        st.session_state["passage_selection_step"] = 1
+        st.rerun()
 
 # ───────── Step 2: Passage Selection (shown when step=1) ─────────
 if st.session_state["passage_selection_step"] == 1:
@@ -65,15 +62,11 @@ if st.session_state["passage_selection_step"] == 1:
                     st.session_state["passage_selection_step"] = 0
                     st.session_state["student_name_input"] = ""  # fresh name for the new assessment
                     st.success(f"✅ Passage assigned: {selected_passage_label}")
-                    st.switch_page("pages/student_record.py")
+                    st.switch_page("pages/Student_Record.py")
             with col_b:
                 if st.button("← Cancel", use_container_width=True):
                     st.session_state["passage_selection_step"] = 0
                     st.rerun()
-
-with col2:
-    if st.button("👩‍🏫 Teacher Dashboard", use_container_width=True):
-        st.switch_page("pages/teacher_admin.py")
 
 # ───────── System Status ─────────
 st.subheader("🔧 System Status")

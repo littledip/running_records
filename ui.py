@@ -27,8 +27,18 @@ def reset_assessment_state() -> None:
     for key in _ASSESSMENT_FLAGS:
         st.session_state[key] = False
     st.session_state["current_passage_id"] = None
-    st.session_state["passage_selection_step"] = 0
 
 
 def assessment_active() -> bool:
     return bool(st.session_state.get("assessment_active", False))
+
+
+def view_switcher(key: str, options: list[str], default: str | None = None) -> str:
+    """Segmented-control tab switcher. `default` only applies on first render —
+    once `key` is in session_state (e.g. set programmatically to auto-advance
+    to a different view), that value wins."""
+    return st.segmented_control(
+        "View", options=options, key=key,
+        default=default or options[0], required=True,
+        label_visibility="collapsed",
+    )

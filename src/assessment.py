@@ -49,6 +49,6 @@ def result_to_record(
         "word_error_rate": round(wer, 3),
         "transcript": result.transcript_text,
         # Full alignment so a result can be re-displayed after a page refresh
-        # (see pages/Student_Results.py) without re-running the model.
+        # (see Running_Record.py's Student Results view) without re-running the model.
         "alignment": result.model_dump(mode="json"),
     }

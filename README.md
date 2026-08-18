@@ -20,10 +20,9 @@ An automated **Running Record** assessment system that uses speech recognition t
 
 ```
 running_records/
-├── Running_Record.py             # App entry point ("Running Record" launcher page)
+├── Running_Record.py             # "Running Record" module: Student Record + Student
+│                                  # Results views, switched via a tab-style control
 ├── pages/                        # Streamlit multi-page views
-│   ├── Student_Record.py         # Recording + transcription + analysis flow
-│   ├── Student_Results.py        # Per-student results (metrics, highlights, charts)
 │   └── Teacher_Dashboard.py      # Teacher dashboard: passages, records, analytics
 ├── src/                          # UI-agnostic core (no Streamlit imports)
 │   ├── alignment.py              # Alignment engine + error classification
@@ -61,14 +60,16 @@ running_records/
 ## How It Works
 
 ```
-Running Record (Running_Record.py)
-  └─▶ "Start Student Assessment" ─▶ pick a passage ─▶ Confirm
-        └─▶ Student Record (pages/Student_Record.py)
-              ├─ Start / Stop microphone recording (sounddevice, background thread)
-              ├─ Transcribe WAV with Whisper (src/pipeline.py)
-              ├─ Align transcript vs. target text (src/alignment.py)
-              ├─ Save result JSON ─▶ data/records/
-              └─▶ Student Results (pages/Student_Results.py)
+Running Record (Running_Record.py) — sidebar item, tab-style switcher inside
+  ├─▶ Student Record view (default)
+  │     ├─ Pick a passage, enter the student's name
+  │     ├─ Record via the browser microphone (st.audio_input)
+  │     ├─ Transcribe WAV with Whisper (src/pipeline.py)
+  │     ├─ Align transcript vs. target text (src/alignment.py)
+  │     ├─ Save result JSON ─▶ data/records/
+  │     └─ Analyze success ─▶ auto-switches to Student Results view
+  └─▶ Student Results view
+        └─ Metrics, highlighted text comparison, error breakdown
 
 Teacher Dashboard (sidebar nav) ─▶ pages/Teacher_Dashboard.py
         ├─ Passages   — add / edit / delete entries in passages.json
@@ -76,7 +77,7 @@ Teacher Dashboard (sidebar nav) ─▶ pages/Teacher_Dashboard.py
         └─ Analytics  — aggregate accuracy/miscue metrics + system status
 ```
 
-Session-state guards enforce the flow: the **Student Record** page refuses to run until an assessment is started from Home, and the **Teacher Dashboard** blocks access while an assessment is active.
+The **Teacher Dashboard** blocks access while an assessment is active (a student name has been entered but not yet analyzed).
 
 ## Installation
 
@@ -102,6 +103,15 @@ source app_env/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+### Windows setup (for the Assessment page's text-to-speech)
+
+The **Assessment** page's "Generate with text-to-speech" option (`src/tts.py`) uses the OS's native speech engine — macOS's `say` command, or **SAPI5 on Windows** via `pywin32`. To prepare a Windows 11 machine:
+
+- `pywin32` installs automatically as part of `pip install -r requirements.txt` (it's gated to Windows via a `sys_platform == "win32"` marker, so it's a no-op on macOS/Linux) — no separate install step needed.
+- Windows 11 ships default English SAPI5 voices out of the box, so no voice pack should need installing. If speech generation fails or produces silent audio, check **Settings → Time & Language → Speech → Manage voices**.
+- `ffmpeg` (see Prerequisites above) is still required — but only for Whisper's audio decoding, not for the TTS step itself; SAPI5 writes WAV directly, so nothing extra is needed there.
+- Not yet verified on a real Windows 11 box — the SAPI5 code path has only been exercised with a mocked `win32com.client` in `tests/test_tts.py`. Treat the first run there as a smoke test (`pages/Assessment.py` → pick a passage → **Generate with text-to-speech**).
 
 ### Hugging Face token (required)
 
@@ -130,10 +140,9 @@ streamlit run Running_Record.py
 
 Then, in the browser:
 
-1. **Running Record** → click **🎤 Start Student Assessment**, choose a passage, and confirm.
-2. **Student Record** → click **Start**, read the passage aloud, then **Stop**. The app transcribes, aligns, saves the result, and redirects to results.
-3. **Student Results** → review accuracy, WPM, total words, error count, highlighted text comparison, and an error breakdown chart.
-4. **Teacher Dashboard** → manage passages, browse/export saved records, and view aggregate analytics.
+1. **Running Record** (opens on the **Student Record** view) → choose a passage, enter the student's name, record via the microphone, then click **Analyze Reading**. The app transcribes, aligns, saves the result, and automatically switches to the **Student Results** view.
+2. **Student Results** → review accuracy, WPM, total words, error count, highlighted text comparison, and an error breakdown chart. Switch back to **Student Record** at any time — e.g. to record the next student — or click **Start Over** to clear the current name/recording.
+3. **Teacher Dashboard** → manage passages, browse/export saved records, and view aggregate analytics.
 
 ### Quick Demo (CLI)
 

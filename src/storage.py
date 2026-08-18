@@ -1,11 +1,12 @@
 """Assessment-record repository — persistence for completed assessments.
 
-Replaces the inline JSON read/write that lived in student_record.py (write) and
-teacher_admin.py (read). Records are one JSON file per assessment under
+Replaces the inline JSON read/write that lived in Student_Record.py (write) and
+Teacher_Dashboard.py (read). Records are one JSON file per assessment under
 config.RECORDS_DIR. No Streamlit imports.
 """
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 from .config import RECORDS_DIR, ensure_records_dir
@@ -50,3 +51,27 @@ def load_latest_record(records_dir: Path = RECORDS_DIR) -> dict | None:
     if not records:
         return None
     return max(records, key=lambda r: r.get("timestamp", ""))
+
+
+def _older_than(record: dict, cutoff_timestamp: float) -> bool:
+    try:
+        return datetime.fromisoformat(record.get("timestamp", "")).timestamp() < cutoff_timestamp
+    except ValueError:
+        return False
+
+
+def count_records_older_than(days: int, records_dir: Path = RECORDS_DIR) -> int:
+    """Return how many saved records are older than `days` days."""
+    cutoff = time.time() - (days * 86400)
+    return sum(1 for r in list_records(records_dir) if _older_than(r, cutoff))
+
+
+def delete_records_older_than(days: int, records_dir: Path = RECORDS_DIR) -> int:
+    """Delete saved records older than `days` days. Returns the number deleted."""
+    cutoff = time.time() - (days * 86400)
+    deleted = 0
+    for record in list_records(records_dir):
+        if _older_than(record, cutoff):
+            Path(record["_file"]).unlink(missing_ok=True)
+            deleted += 1
+    return deleted

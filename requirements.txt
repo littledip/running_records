@@ -10,6 +10,9 @@ numpy>=1.24.0
 # Alignment
 rapidfuzz>=3.0.0
 
+# Text-to-speech (Windows only — macOS uses the built-in `say` command)
+pywin32>=306; sys_platform == "win32"
+
 # Data contracts
 pydantic>=2.5.0
 

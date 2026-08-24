@@ -9,7 +9,7 @@ from src.assessment import run_assessment, result_to_record
 from src.models import AlignmentResult
 from src.passages import get_passage, load_passages
 from src.storage import load_latest_record, save_record
-from ui import reset_assessment_state, setup_page, view_switcher
+from ui import reset_assessment_state, setup_page, step_gate, view_switcher
 from utils import ERROR_LABELS, create_error_breakdown_chart, highlight_text
 
 setup_page("Reading Assessment | Running Record")
@@ -19,14 +19,42 @@ RECORD_VIEW = "Student Record"
 RESULTS_VIEW = "Student Results"
 
 
+def _label_text(text: str) -> None:
+    """Render text at the same color/size/weight as a widget label (e.g.
+    "Student name"). st.caption renders identical base CSS but its container
+    applies opacity:0.6, which is why captions look lighter/dimmer."""
+    st.markdown(
+        f'<p style="font-size:14px; font-weight:400; margin-bottom:0.25rem;">{text}</p>',
+        unsafe_allow_html=True,
+    )
+
+
 def _student_record_view():
     st.subheader("🎤 Student Record")
+
+    # Apply a pending name reset (set by "Start Over", below) before the
+    # text_input renders — can't set a widget's own session-state key after
+    # it's already rendered this run.
+    if st.session_state.pop("_pending_rr_name_reset", False):
+        st.session_state["student_name_input"] = ""
 
     student_name = st.text_input(
         "👤 Student name",
         key="student_name_input",
         placeholder="e.g., Jane Doe",
     ).strip()
+
+    def _reset_after_name_cleared():
+        st.session_state["rr_passage_selector"] = None
+        st.session_state["rr_attempt"] = st.session_state.get("rr_attempt", 0) + 1
+        reset_assessment_state()
+
+    if not step_gate(
+        "rr_name", student_name, reset_fn=_reset_after_name_cleared,
+        prompt="Enter the student's name above to continue.",
+    ):
+        return
+
     st.session_state["current_student_name"] = student_name
     st.session_state["current_student_id"] = student_name.replace(" ", "_") or "Unknown"
 
@@ -41,8 +69,14 @@ def _student_record_view():
         index=None, placeholder="Choose a passage...",
     )
 
-    if selected_label is None:
-        st.info("Select a reading passage above to reveal recording.")
+    def _reset_after_passage_cleared():
+        st.session_state["rr_attempt"] = st.session_state.get("rr_attempt", 0) + 1
+        reset_assessment_state()
+
+    if not step_gate(
+        "rr_passage", selected_label, reset_fn=_reset_after_passage_cleared,
+        prompt="Select a reading passage above to reveal recording.",
+    ):
         return
 
     passage_id = passage_options[selected_label]
@@ -50,16 +84,16 @@ def _student_record_view():
     passage = get_passage(passage_id)
     target_text = passage.get("text", "")
 
-    st.caption("📖 Target Text")
+    _label_text("📖 Target Text")
     TEXT_SIZES = {"Small": "14px", "Medium": "18px", "Large": "22px"}
     col_a, col_b, _ = st.columns([1, 2, 4], gap="small")
     with col_a:
-        st.caption("Dark background")
+        _label_text("Dark background")
         dark_background = st.toggle(
             "Dark background", value=True, key="rr_target_dark_mode", label_visibility="collapsed"
         )
     with col_b:
-        st.caption("Text size")
+        _label_text("Text size")
         size_label = st.segmented_control(
             "Text size", options=list(TEXT_SIZES.keys()), default="Medium",
             key="rr_target_text_size", required=True, label_visibility="collapsed",
@@ -77,8 +111,7 @@ def _student_record_view():
 
     st.session_state["assessment_active"] = True
 
-    reader = f"**{student_name}**" if student_name else "the student"
-    st.caption(f"Record {reader} reading the passage aloud, then click Analyze.")
+    _label_text("Click the microphone below to record the reading of the passage, and then click Analyze Reading.")
     attempt = st.session_state.get("rr_attempt", 0)
     audio_value = st.audio_input("Record reading", key=f"rr_audio_{attempt}", label_visibility="collapsed")
 
@@ -90,13 +123,13 @@ def _student_record_view():
         )
     with col2:
         if st.button("🔄 Start Over", use_container_width=True):
-            st.session_state["rr_attempt"] = attempt + 1
-            reset_assessment_state()
-            st.session_state["student_name_input"] = ""
+            # Just clear the name and rerun — step_gate's own reset_fn (above)
+            # detects the transition to empty and reinitializes everything
+            # downstream (passage selection, recording attempt, etc.).
+            st.session_state["_pending_rr_name_reset"] = True
             st.rerun()
 
     if audio_value is None:
-        st.info("Record the reading with the microphone above, then click **Analyze Reading**.")
         return
 
     if not analyze:

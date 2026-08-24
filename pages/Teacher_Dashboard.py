@@ -3,6 +3,7 @@ from datetime import datetime
 import pandas as pd
 
 from src.config import PASSAGES_FILE, RECORDS_DIR
+from src import assessment_questions as questions_lib
 from src import passages as passages_lib
 from src.storage import count_records_older_than, delete_records_older_than, list_records
 from ui import setup_page
@@ -21,6 +22,11 @@ def load_passages():
 @st.cache_data(ttl=60)
 def load_records():
     return list_records()
+
+
+@st.cache_data(ttl=300)
+def load_assessment_questions():
+    return questions_lib.load_assessment_questions()
 
 # ───────── Session State Guards ─────────
 if "assessment_active" not in st.session_state:
@@ -45,8 +51,8 @@ if not guard_teacher_access():
     st.stop()
 
 # ───────── Tab Navigation ─────────
-tab_passages, tab_records, tab_analytics, tab_system = st.tabs(
-    ["📚 Passages", "📊 Student Records", "📈 Analytics", "🔧 System Status"]
+tab_passages, tab_questions, tab_records, tab_analytics, tab_system = st.tabs(
+    ["📚 Reading Passages", "📝 Assessment Questions", "📊 Student Records", "📈 Analytics", "🔧 System Status"]
 )
 
 # ═══════════════════════════════════════════════════════════
@@ -127,7 +133,7 @@ with tab_passages:
     )
 
     submit_label = "💾 Save Changes" if editing_passage is not None else "💾 Save Passage"
-    if st.button(submit_label, type="primary", disabled=unchanged):
+    if st.button(submit_label, type="primary", disabled=unchanged, key="save_passage_btn"):
         if not passage_id or not title or not text:
             st.error("❌ ID, Title, and Passage Text are required.")
         else:
@@ -174,7 +180,101 @@ with tab_passages:
             st.rerun()
 
 # ═══════════════════════════════════════════════════════════
-# TAB 2: Student Records Viewer
+# TAB 2: Assessment Question Bank (standalone — not tied to passages)
+# ═══════════════════════════════════════════════════════════
+with tab_questions:
+    st.subheader("Manage Assessment Questions")
+    st.caption(
+        "A standalone question bank, not tied to any specific passage. "
+        "Changes save immediately to `assessment_questions.json`."
+    )
+
+    questions = load_assessment_questions()
+    if not questions:
+        st.info("📭 No questions yet. Add one below.")
+
+    NEW_QUESTION_LABEL = "➕ Create new question"
+
+    # Same pending-reset pattern as the Reading Passages tab above — see the
+    # comment there for why this is explicit rather than clear_on_submit.
+    if "_pending_question_edit_choice" in st.session_state:
+        st.session_state["question_edit_choice"] = st.session_state.pop("_pending_question_edit_choice")
+    if st.session_state.pop("_pending_question_form_reset", False):
+        st.session_state["new_question_id"] = ""
+        st.session_state["new_question_text"] = ""
+        st.session_state["_question_form_loaded_id"] = None
+
+    def _question_label(qid, q):
+        preview = q.get("question_text", "")
+        preview = preview if len(preview) <= 40 else preview[:40] + "…"
+        return f"{qid} - {preview}"
+
+    question_label_to_id = {NEW_QUESTION_LABEL: None}
+    for qid, q in questions.items():
+        question_label_to_id[_question_label(qid, q)] = qid
+
+    question_edit_choice = st.selectbox(
+        "Select a question to edit, or create a new one",
+        options=list(question_label_to_id.keys()), key="question_edit_choice",
+    )
+    editing_question_id = question_label_to_id[question_edit_choice]
+    editing_question = questions.get(editing_question_id) if editing_question_id is not None else None
+
+    if st.session_state.get("_question_form_loaded_id") != editing_question_id:
+        st.session_state["new_question_id"] = str(editing_question_id) if editing_question_id is not None else ""
+        st.session_state["new_question_text"] = (editing_question or {}).get("question_text", "")
+        st.session_state["_question_form_loaded_id"] = editing_question_id
+
+    question_id = st.text_input(
+        "Question ID (e.g., q1)", key="new_question_id",
+        disabled=editing_question is not None,
+    )
+    question_text = st.text_area("Question Text", key="new_question_text", height=100)
+
+    question_unchanged = editing_question is not None and (
+        question_text == editing_question.get("question_text", "")
+    )
+
+    question_submit_label = "💾 Save Changes" if editing_question is not None else "💾 Save Question"
+    if st.button(question_submit_label, type="primary", disabled=question_unchanged, key="save_question_btn"):
+        if not question_id or not question_text:
+            st.error("❌ ID and Question Text are required.")
+        else:
+            save_question_id = editing_question_id if editing_question is not None else question_id
+            questions_lib.save_assessment_question({
+                "id": save_question_id,
+                "question_text": question_text,
+                "created_at": (editing_question or {}).get("created_at", datetime.now().isoformat()),
+                "updated_at": datetime.now().isoformat(),
+            })
+            load_assessment_questions.clear()
+            st.session_state["_pending_question_edit_choice"] = NEW_QUESTION_LABEL
+            st.session_state["_pending_question_form_reset"] = True
+            st.success(f"✅ Question `{save_question_id}` saved successfully.")
+            st.rerun()
+
+    if questions:
+        question_rows = [
+            {"ID": qid, "Question Text":
+                (q.get("question_text", "")[:80] + "…") if len(q.get("question_text", "")) > 80 else q.get("question_text", "")}
+            for qid, q in questions.items()
+        ]
+        st.caption("Select one or more rows to delete.")
+        question_event = st.dataframe(
+            pd.DataFrame(question_rows), use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="multi-row",
+        )
+        selected_question_ids = [question_rows[i]["ID"] for i in question_event.selection.rows]
+
+        if st.button("🗑️ Delete Selected Question(s)", type="secondary",
+                     disabled=not selected_question_ids):
+            removed = questions_lib.delete_assessment_questions(selected_question_ids)
+            load_assessment_questions.clear()
+            st.success(f"✅ Deleted {removed} question(s).")
+            st.rerun()
+
+# ═══════════════════════════════════════════════════════════
+# TAB 3: Student Records Viewer
 # ═══════════════════════════════════════════════════════════
 with tab_records:
     st.subheader("Student Assessment Records")
@@ -244,7 +344,7 @@ with tab_records:
             st.warning("⚠️ No records match your filters.")
 
 # ═══════════════════════════════════════════════════════════
-# TAB 3: Analytics & System Status
+# TAB 4: Analytics
 # ═══════════════════════════════════════════════════════════
 with tab_analytics:
     st.subheader("📈 Assessment Analytics")
@@ -283,7 +383,7 @@ with tab_analytics:
             st.info("📊 Install `matplotlib` for charts: `pip install matplotlib`")
 
 # ═══════════════════════════════════════════════════════════
-# TAB 4: System Status
+# TAB 5: System Status
 # ═══════════════════════════════════════════════════════════
 with tab_system:
     st.subheader("🔧 System Status")

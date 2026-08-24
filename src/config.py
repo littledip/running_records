@@ -9,6 +9,7 @@ from pathlib import Path
 # Project layout
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PASSAGES_FILE = PROJECT_ROOT / "passages.json"
+ASSESSMENT_QUESTIONS_FILE = PROJECT_ROOT / "assessment_questions.json"
 DATA_DIR = PROJECT_ROOT / "data"
 RECORDS_DIR = DATA_DIR / "records"
 

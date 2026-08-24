@@ -42,3 +42,25 @@ def view_switcher(key: str, options: list[str], default: str | None = None) -> s
         default=default or options[0], required=True,
         label_visibility="collapsed",
     )
+
+
+def step_gate(step_key: str, value, reset_fn=None, prompt: str = "") -> bool:
+    """Reveal/reset gate for a multi-step form (e.g. name -> selection ->
+    recording, each step only shown once the previous one has a value).
+
+    Returns True if `value` is truthy (caller should render the next step).
+    If falsy: shows `prompt` (when given) and returns False. If this is a
+    fresh transition from truthy to falsy — not the initial render, and not
+    already empty on a prior rerun — calls `reset_fn()` first, so state from
+    the now-abandoned steps doesn't linger and resurface later.
+    """
+    was_empty_key = f"_gate_{step_key}_was_empty"
+    if not value:
+        if not st.session_state.get(was_empty_key, True) and reset_fn:
+            reset_fn()
+        st.session_state[was_empty_key] = True
+        if prompt:
+            st.info(prompt)
+        return False
+    st.session_state[was_empty_key] = False
+    return True

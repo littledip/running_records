@@ -1,3 +1,4 @@
+import html
 import os
 import tempfile
 
@@ -21,21 +22,6 @@ RESULTS_VIEW = "Student Results"
 def _student_record_view():
     st.subheader("🎤 Student Record")
 
-    passages = load_passages()
-    if not passages:
-        st.error("❌ No passages available. Please add passages via the Teacher Dashboard first.")
-        return
-
-    passage_options = {f"{p.get('id')} - {p.get('title', 'Untitled')}": p.get("id") for p in passages.values()}
-    selected_label = st.selectbox(
-        "📖 Select a reading passage", options=list(passage_options.keys()), key="rr_passage_selector"
-    )
-    passage_id = passage_options[selected_label]
-    st.session_state["current_passage_id"] = passage_id
-    passage = get_passage(passage_id)
-    target_text = passage.get("text", "")
-    st.text_area("📖 Target Text", value=target_text, height=150, disabled=True)
-
     student_name = st.text_input(
         "👤 Student name",
         key="student_name_input",
@@ -44,15 +30,55 @@ def _student_record_view():
     st.session_state["current_student_name"] = student_name
     st.session_state["current_student_id"] = student_name.replace(" ", "_") or "Unknown"
 
-    st.divider()
-
-    if not student_name:
-        st.info("Enter the student's name above to reveal recording.")
+    passages = load_passages()
+    if not passages:
+        st.error("❌ No passages available. Please add passages via the Teacher Dashboard first.")
         return
+
+    passage_options = {f"{p.get('id')} - {p.get('title', 'Untitled')}": p.get("id") for p in passages.values()}
+    selected_label = st.selectbox(
+        "📖 Select a reading passage", options=list(passage_options.keys()), key="rr_passage_selector",
+        index=None, placeholder="Choose a passage...",
+    )
+
+    if selected_label is None:
+        st.info("Select a reading passage above to reveal recording.")
+        return
+
+    passage_id = passage_options[selected_label]
+    st.session_state["current_passage_id"] = passage_id
+    passage = get_passage(passage_id)
+    target_text = passage.get("text", "")
+
+    st.caption("📖 Target Text")
+    TEXT_SIZES = {"Small": "14px", "Medium": "18px", "Large": "22px"}
+    col_a, col_b, _ = st.columns([1, 2, 4], gap="small")
+    with col_a:
+        st.caption("Dark background")
+        dark_background = st.toggle(
+            "Dark background", value=True, key="rr_target_dark_mode", label_visibility="collapsed"
+        )
+    with col_b:
+        st.caption("Text size")
+        size_label = st.segmented_control(
+            "Text size", options=list(TEXT_SIZES.keys()), default="Medium",
+            key="rr_target_text_size", required=True, label_visibility="collapsed",
+        )
+    font_size = TEXT_SIZES.get(size_label, TEXT_SIZES["Medium"])
+
+    bg, fg = ("#000000", "#ffffff") if dark_background else ("#ffffff", "#000000")
+    border = "none" if dark_background else "1px solid #d0d0d0"
+    st.markdown(
+        f'<div style="background-color:{bg}; color:{fg}; padding:12px 14px; '
+        f'border-radius:6px; border:{border}; min-height:150px; white-space:pre-wrap; '
+        f'font-size:{font_size}; line-height:1.5; margin-bottom:20px;">{html.escape(target_text)}</div>',
+        unsafe_allow_html=True,
+    )
 
     st.session_state["assessment_active"] = True
 
-    st.caption(f"Record **{student_name}** reading the passage aloud, then click Analyze.")
+    reader = f"**{student_name}**" if student_name else "the student"
+    st.caption(f"Record {reader} reading the passage aloud, then click Analyze.")
     attempt = st.session_state.get("rr_attempt", 0)
     audio_value = st.audio_input("Record reading", key=f"rr_audio_{attempt}", label_visibility="collapsed")
 

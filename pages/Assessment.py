@@ -77,7 +77,17 @@ def main():
     target_text = passage.get("text", "")
     st.text_area("Passage text", value=target_text, height=120, disabled=True)
 
+    student_name = st.text_input(
+        "👤 Student name",
+        key="assessment_student_name_input",
+        placeholder="e.g., Jane Doe",
+    ).strip()
+
     st.divider()
+
+    if not student_name:
+        st.info("Enter the student's name above to continue.")
+        return
 
     if SHOW_ASSESSMENT_AUDIO_SOURCE_PICKER:
         audio_bytes, audio_mime = _get_audio_with_picker(passage)
